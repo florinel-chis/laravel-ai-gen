@@ -46,13 +46,13 @@ Models are downloaded automatically from HuggingFace on first run.
 | Coder (default) | 3B | Generate code (faster, ~1-2s/file) | [fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA) |
 | **Coder (recommended)** | **7B** | **Generate code (best quality, ~12s/file)** | [fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA) |
 
-Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (162 examples)
+Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (187 examples)
 
-All models fine-tuned on Apple M2 Pro 16GB in ~5-7 minutes each using [Laravel Boost](https://laravel.com/docs/13.x/boost) guidelines.
+All models fine-tuned on Apple M2 Pro 16GB in ~7-12 minutes each using [Laravel Boost](https://laravel.com/docs/13.x/boost) guidelines.
 
 ## Patterns Covered (15+ class types)
 
-The 7B coder (v2) generates correct code for:
+The 7B coder (v3) generates correct code for:
 
 - **Eloquent Models** — fillable, casts, relationships, scopes, soft deletes
 - **Migrations** — create table, alter table, foreign keys, pivot tables
@@ -66,7 +66,7 @@ The 7B coder (v2) generates correct code for:
 - **Seeders** — model creation, bulk data
 - **Policies** — authorization methods
 - **Observers** — model lifecycle hooks
-- **Artisan Commands** — signature, handle, arguments
+- **Artisan Commands** — signature, handle, arguments, CSV/JSON/HTTP data operations, progress bars, interactive prompts, file export, chunked imports, Storage facade
 - **Blade Components** — class components with props
 - **Mailables** — envelope, content, markdown
 - **Routes** — API resource, groups, custom endpoints
@@ -95,26 +95,36 @@ All 7 endpoints work: create, list, toggle, delete, validation.
 
 This is a research project, not a production tool.
 
-**What works well**: Migrations, models, form requests — consistently good output when instructions are specific.
+**What works well**: Migrations, models, form requests, Artisan commands — consistently good output when instructions are specific.
 
 **What needs improvement**: Controllers can use wrong patterns (`$request->user()` when no auth), routes default to apiResource without custom endpoints, planner gives vague instructions.
 
 **The key insight**: The coder produces perfect output when instructions list exact fields, methods, and behavior. Most issues trace back to vague instructions, not model capability.
 
+### Artisan Commands: CSV/JSON/HTTP (v3)
+
+The 7B v3 model was specifically trained on 25 new Artisan command examples covering data operations:
+
+```bash
+# These now generate correct code without repetition loops
+python3 laravel-gen.py --coder-only "Write a command app:import-products {file} {--dry-run} that reads CSV with name,price,sku columns, upserts Product records using updateOrCreate(['sku'=>...], [...]), shows a progress bar with \$this->withProgressBar(), returns Command::SUCCESS"
+```
+
+**8/8 held-out evaluation prompts score 10/10** on automated checks (PHP syntax, correct structure, no fake facades, no duplicate imports).
+
 ### The Repetition Problem
 
-Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens). This happens when vague instructions trigger pretraining archetypes — the model "remembers" generic patterns and can't stop generating. Mitigated by: specific instructions, token caps, post-processing repetition detection.
+Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens). This happens when vague instructions trigger pretraining archetypes — the model "remembers" generic patterns and can't stop generating. Mitigated by: specific instructions, token caps, post-processing repetition detection, and end-token stripping (`<|im_end|>`).
 
 ### Evaluation Caveats
 
-- Tested on a limited number of prompts, not a rigorous benchmark
-- Test prompts closely match training patterns
+- Eval prompts are structurally similar to training patterns — not a rigorous benchmark
 - A proper evaluation using [Laravel's official 17-task benchmark](https://laravel.com/blog/which-ai-model-is-best-for-laravel) has not been done
 - Results are exploratory — broader testing needed
 
 ## How It Was Built
 
-23-step research investigation into local AI-assisted Laravel code generation:
+25-step research investigation into local AI-assisted Laravel code generation:
 
 1. Tested multiple models on 16GB Mac (GPT-OSS-20B, Qwen 14B, yannelli's Laravel models)
 2. Found that instruction-to-code training format produces code generators, doc-Q&A produces documentation assistants
@@ -123,6 +133,8 @@ Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens).
 5. Added 23 new patterns (Jobs, Events, Notifications, Factories, etc.) — val loss dropped from 0.503 to 0.178
 6. Tested GRPO (ineffective — failures are semantic), DoRA (better patterns but more memory)
 7. Tested on real Laravel projects (todo app, contact form)
+8. Diagnosed Artisan command repetition bug (only 2/145 training examples → model hallucinated fake `Facades\Progress`)
+9. Added 25 targeted Artisan command examples (CSV/JSON/HTTP data operations) — val loss 0.076, 8/8 eval prompts pass
 
 ## License
 

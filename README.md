@@ -46,17 +46,19 @@ Models are downloaded automatically from HuggingFace on first run.
 | Coder (default) | 3B | Generate code (faster, ~1-2s/file) | [fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA) |
 | **Coder (recommended)** | **7B** | **Generate code (best quality, ~12s/file)** | [fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA) |
 
-Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (202 examples)
+Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (235 examples)
 
-All models fine-tuned on Apple M2 Pro 16GB in ~7-12 minutes each using [Laravel Boost](https://laravel.com/docs/13.x/boost) guidelines.
+All models fine-tuned on Apple M2 Pro 16GB in ~7-20 minutes each using [Laravel Boost](https://laravel.com/docs/13.x/boost) guidelines.
 
-## Patterns Covered (15+ class types)
+## Patterns Covered (18+ class types)
 
-The 7B coder (v4) generates correct code for:
+The 7B coder (v5) generates correct code for:
 
 - **Eloquent Models** — fillable, casts, relationships, scopes, soft deletes
 - **Migrations** — create table, alter table, foreign keys, pivot tables
-- **Form Requests** — validation rules (array and pipe syntax)
+- **Form Requests** — rules, `messages()`, `attributes()`, `prepareForValidation()`, `after()` cross-field validation
+- **API Resources** — `JsonResource` with `whenLoaded()`, `$this->when()`, `mergeWhen()`, `whenNotNull()`, `ResourceCollection` with custom `with()` metadata
+- **Pest Feature Tests** — CRUD, auth/authorization, validation, pagination, `Queue::fake()`, `Mail::fake()`
 - **Controllers** — API resource, CRUD, route model binding
 - **Queue Jobs** — ShouldQueue, constructor injection, handle()
 - **Events** — Dispatchable, SerializesModels
@@ -95,22 +97,44 @@ All 7 endpoints work: create, list, toggle, delete, validation.
 
 This is a research project, not a production tool.
 
-**What works well**: Migrations, models, form requests, Artisan commands — consistently good output when instructions are specific.
+**What works well**: Migrations, models, form requests (including precision hooks), API resources with whenLoaded, Artisan commands, Pest feature tests — consistently good output when instructions are specific.
 
-**What needs improvement**: Controllers can use wrong patterns (`$request->user()` when no auth), routes default to apiResource without custom endpoints, planner gives vague instructions.
+**What needs improvement**: For Pest tests, explicitly say "use Pest function syntax (uses/test/it)" to avoid PHPUnit class-based output. Controllers can use wrong patterns without auth context. Planner gives vague instructions.
 
 **The key insight**: The coder produces perfect output when instructions list exact fields, methods, and behavior. Most issues trace back to vague instructions, not model capability.
 
-### Artisan Commands: CSV/JSON/HTTP (v4)
+### API Resources (v5)
 
-The 7B v4 model was trained on 40+ Artisan command examples. Sprint 2 (v4) eliminated 3 precision bugs present in v3 — **5/5 × 11/11 eval score, zero manual fixes needed**:
+The 7B v5 model covers all key relationship loading patterns:
 
 ```bash
-# These now generate correct code without repetition loops
-python3 laravel-gen.py --coder-only "Write a command app:import-products {file} {--dry-run} that reads CSV with name,price,sku columns, upserts Product records using updateOrCreate(['sku'=>...], [...]), shows a progress bar with \$this->withProgressBar(), returns Command::SUCCESS"
+python3 laravel-gen.py --coder-only "Create UserResource with whenLoaded for posts (PostResource collection) and subscription (SubscriptionResource). Use whenNotNull for email_verified_at."
 ```
 
-**8/8 held-out evaluation prompts score 10/10** on automated checks (PHP syntax, correct structure, no fake facades, no duplicate imports).
+Generated code correctly uses `whenLoaded()`, not `$this->posts` — **3/3 resource eval prompts pass**.
+
+### Form Request Precision (v5)
+
+```bash
+python3 laravel-gen.py --coder-only "StoreInvoiceRequest with messages() for required/numeric rules, attributes() renaming client_id and due_date, prepareForValidation() that rounds amount to 2 decimal places"
+```
+
+Generated code correctly uses `messages()` with `field.rule` keys, `prepareForValidation()` calls `$this->merge()` — **2/2 form request eval prompts pass**.
+
+### Pest Feature Tests (v5)
+
+```bash
+python3 laravel-gen.py --coder-only "Write a Pest feature test (Pest function syntax) for POST /api/posts: authenticated user creates post (assertCreated + assertDatabaseHas), unauthenticated returns 401, missing title returns 422"
+```
+
+All 6 generated test assertions pass in a real Laravel 13.2.0 project:
+```
+Tests: 6 passed (13 assertions)
+```
+
+### Artisan Commands: CSV/JSON/HTTP (v4+)
+
+The 7B v4 model was trained on 40+ Artisan command examples. Sprint 2 (v4) eliminated 3 precision bugs — **5/5 × 11/11 eval score, zero manual fixes needed**. v5 confirms no regression.
 
 ### The Repetition Problem
 
@@ -119,12 +143,12 @@ Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens).
 ### Evaluation Caveats
 
 - Eval prompts are structurally similar to training patterns — not a rigorous benchmark
-- A proper evaluation using [Laravel's official 17-task benchmark](https://laravel.com/blog/which-ai-model-is-best-for-laravel) has not been done
+- A proper evaluation using [Laravel's official 17-task benchmark](https://laravel.com/blog/which-ai-model-is-best-for-laravel) has not been done (we cover ~5/17 tasks)
 - Results are exploratory — broader testing needed
 
 ## How It Was Built
 
-25-step research investigation into local AI-assisted Laravel code generation:
+28-step research investigation into local AI-assisted Laravel code generation:
 
 1. Tested multiple models on 16GB Mac (GPT-OSS-20B, Qwen 14B, yannelli's Laravel models)
 2. Found that instruction-to-code training format produces code generators, doc-Q&A produces documentation assistants
@@ -134,7 +158,9 @@ Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens).
 6. Tested GRPO (ineffective — failures are semantic), DoRA (better patterns but more memory)
 7. Tested on real Laravel projects (todo app, contact form)
 8. Diagnosed Artisan command repetition bug (only 2/145 training examples → model hallucinated fake `Facades\Progress`)
-9. Added 25 targeted Artisan command examples (CSV/JSON/HTTP data operations) — val loss 0.076, 8/8 eval prompts pass
+9. Added 25 targeted Artisan command examples (CSV/JSON/HTTP data operations) — val loss 0.076
+10. Sprint 2: targeted precision fixes (3 bug patterns eliminated) — val loss 0.055, 5/5 × 11/11
+11. Sprint 3: API Resources + Form Request precision + Pest tests — val loss 0.032, 14/14 test assertions pass in real Laravel
 
 ## License
 

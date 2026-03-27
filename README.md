@@ -46,13 +46,13 @@ Models are downloaded automatically from HuggingFace on first run.
 | Coder (default) | 3B | Generate code (faster, ~1-2s/file) | [fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-3B-Instruct-LoRA) |
 | **Coder (recommended)** | **7B** | **Generate code (best quality, ~12s/file)** | [fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA) |
 
-Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (187 examples)
+Training data: [fchis/Laravel-13x-Code-Instructions](https://huggingface.co/datasets/fchis/Laravel-13x-Code-Instructions) (202 examples)
 
 All models fine-tuned on Apple M2 Pro 16GB in ~7-12 minutes each using [Laravel Boost](https://laravel.com/docs/13.x/boost) guidelines.
 
 ## Patterns Covered (15+ class types)
 
-The 7B coder (v3) generates correct code for:
+The 7B coder (v4) generates correct code for:
 
 - **Eloquent Models** — fillable, casts, relationships, scopes, soft deletes
 - **Migrations** — create table, alter table, foreign keys, pivot tables
@@ -101,9 +101,9 @@ This is a research project, not a production tool.
 
 **The key insight**: The coder produces perfect output when instructions list exact fields, methods, and behavior. Most issues trace back to vague instructions, not model capability.
 
-### Artisan Commands: CSV/JSON/HTTP (v3)
+### Artisan Commands: CSV/JSON/HTTP (v4)
 
-The 7B v3 model was specifically trained on 25 new Artisan command examples covering data operations:
+The 7B v4 model was trained on 40+ Artisan command examples. Sprint 2 (v4) eliminated 3 precision bugs present in v3 — **5/5 × 11/11 eval score, zero manual fixes needed**:
 
 ```bash
 # These now generate correct code without repetition loops

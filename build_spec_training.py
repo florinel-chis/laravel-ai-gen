@@ -18,7 +18,8 @@ Rules:
 - artifact=model: ALWAYS add use HasFactory when has_factory=true. ONLY add relationship methods listed in relationships[]. Import every relationship return type (BelongsTo etc).
 - artifact=controller: ALWAYS import App\\Http\\Controllers\\Controller and Illuminate\\Http\\Request. destroy() returns response()->noContent(). store() returns response()->json($resource, 201). If validation_mode=inline use $request->validate([...]) in store() and update(). If validation_mode=form_request import and use the FormRequest class.
 - artifact=resource: ALWAYS import Illuminate\\Http\\Resources\\Json\\JsonResource. For EVERY entry in loaded_relations[] that has a "resource" key, add `use App\\Http\\Resources\\{ResourceClass};` at the top — even if it is in the same namespace. Never use a Resource class without importing it.
-- artifact=form_request: rules() returns exact rules from spec. If conditional_rules present, expand each field using $this->isMethod('POST') ternary. authorize() returns true."""
+- artifact=form_request: rules() returns exact rules from spec. If conditional_rules present, expand each field using $this->isMethod('POST') ternary or spread. For POST-only rules use spread: `...$this->isMethod('POST') ? ['rule'] : []`. authorize() returns true. When unique_ignore_route_param is set (non-null), replace any 'unique:table,col' string rule with Rule::unique('table', 'col')->ignore($this->route('param')). Import use Illuminate\\Validation\\Rule; at the top.
+- artifact=controller: When the model has FK fields in fillable (e.g. author_id, category_id), ALWAYS include them in $request->validated() passed to Model::create(). NEVER exclude FK fields or set them separately after create()."""
 
 # ── EXAMPLES ─────────────────────────────────────────────────────────────────
 
@@ -2588,6 +2589,233 @@ class ProjectResource extends JsonResource
             'members'        => TeamMemberResource::collection($this->whenLoaded('members')),
             'category'       => CategoryResource::make($this->whenLoaded('category')),
             'created_at'     => $this->created_at,
+        ];
+    }
+}
+""")
+
+# ── v5: Rule::unique()->ignore() additional examples ─────────────────────
+
+ex({
+    "laravel_version": "13.x",
+    "artifact": "form_request",
+    "class": "StoreUserRequest",
+    "namespace": "App\\Http\\Requests",
+    "authorize": True,
+    "rules": {
+        "name": ["required", "string", "max:255"],
+        "email": ["required", "email", "max:255", "unique:users,email"],
+        "password": ["required", "string", "min:8"],
+        "role": ["nullable", "string", "in:admin,editor,viewer"]
+    },
+    "unique_ignore_route_param": "user"
+}, """
+<?php
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+use Illuminate\\Validation\\Rule;
+
+class StoreUserRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name'     => ['required', 'string', 'max:255'],
+            'email'    => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($this->route('user'))],
+            'password' => ['required', 'string', 'min:8'],
+            'role'     => ['nullable', 'string', 'in:admin,editor,viewer'],
+        ];
+    }
+}
+""")
+
+ex({
+    "laravel_version": "13.x",
+    "artifact": "form_request",
+    "class": "StoreCategoryRequest",
+    "namespace": "App\\Http\\Requests",
+    "authorize": True,
+    "rules": {
+        "name": ["required", "string", "max:255", "unique:categories,name"],
+        "slug": ["required", "string", "max:255", "unique:categories,slug"],
+        "description": ["nullable", "string"],
+        "parent_id": ["nullable", "integer", "exists:categories,id"]
+    },
+    "unique_ignore_route_param": "category"
+}, """
+<?php
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+use Illuminate\\Validation\\Rule;
+
+class StoreCategoryRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'name'        => ['required', 'string', 'max:255', Rule::unique('categories', 'name')->ignore($this->route('category'))],
+            'slug'        => ['required', 'string', 'max:255', Rule::unique('categories', 'slug')->ignore($this->route('category'))],
+            'description' => ['nullable', 'string'],
+            'parent_id'   => ['nullable', 'integer', 'exists:categories,id'],
+        ];
+    }
+}
+""")
+
+ex({
+    "laravel_version": "13.x",
+    "artifact": "form_request",
+    "class": "StoreArticleRequest",
+    "namespace": "App\\Http\\Requests",
+    "authorize": True,
+    "rules": {
+        "title": ["required", "string", "max:255"],
+        "slug": ["required", "string", "max:255", "unique:articles,slug"],
+        "body": ["required", "string"],
+        "status": ["nullable", "string", "in:draft,published,archived"],
+        "category_id": ["required", "integer", "exists:categories,id"]
+    },
+    "unique_ignore_route_param": "article"
+}, """
+<?php
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+use Illuminate\\Validation\\Rule;
+
+class StoreArticleRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'title'       => ['required', 'string', 'max:255'],
+            'slug'        => ['required', 'string', 'max:255', Rule::unique('articles', 'slug')->ignore($this->route('article'))],
+            'body'        => ['required', 'string'],
+            'status'      => ['nullable', 'string', 'in:draft,published,archived'],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
+        ];
+    }
+}
+""")
+
+# ── v5: FK-in-create controller examples ─────────────────────────────────
+
+ex({
+    "laravel_version": "13.x",
+    "artifact": "controller",
+    "class": "ReviewController",
+    "namespace": "App\\Http\\Controllers\\Api",
+    "model": "Review",
+    "model_namespace": "App\\Models",
+    "resource": "ReviewResource",
+    "form_request": "StoreReviewRequest",
+    "validation_mode": "form_request",
+    "actions": {
+        "index": {"paginate": 15, "eager_load": ["product"]},
+        "store": {"status_code": 201, "eager_load_after": ["product"]},
+        "show": {"eager_load": ["product"]},
+        "update": {},
+        "destroy": {"force_delete": False}
+    }
+}, """
+<?php
+namespace App\\Http\\Controllers\\Api;
+
+use App\\Http\\Controllers\\Controller;
+use App\\Http\\Requests\\StoreReviewRequest;
+use App\\Http\\Resources\\ReviewResource;
+use App\\Models\\Review;
+use Illuminate\\Http\\Request;
+
+class ReviewController extends Controller
+{
+    public function index(Request $request)
+    {
+        $reviews = Review::query()
+            ->with('product')
+            ->paginate(15);
+
+        return ReviewResource::collection($reviews);
+    }
+
+    public function store(StoreReviewRequest $request)
+    {
+        $review = Review::create($request->validated());
+
+        return response()->json(new ReviewResource($review->load('product')), 201);
+    }
+
+    public function show(Review $review)
+    {
+        return new ReviewResource($review->load('product'));
+    }
+
+    public function update(StoreReviewRequest $request, Review $review)
+    {
+        $review->update($request->validated());
+
+        return new ReviewResource($review);
+    }
+
+    public function destroy(Review $review)
+    {
+        $review->delete();
+
+        return response()->noContent();
+    }
+}
+""")
+
+ex({
+    "laravel_version": "13.x",
+    "artifact": "form_request",
+    "class": "StoreReviewRequest",
+    "namespace": "App\\Http\\Requests",
+    "authorize": True,
+    "rules": {
+        "product_id": ["required", "integer", "exists:products,id"],
+        "rating": ["required", "integer", "min:1", "max:5"],
+        "title": ["required", "string", "max:255"],
+        "body": ["nullable", "string"]
+    },
+    "unique_ignore_route_param": None
+}, """
+<?php
+namespace App\\Http\\Requests;
+
+use Illuminate\\Foundation\\Http\\FormRequest;
+
+class StoreReviewRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    public function rules(): array
+    {
+        return [
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'rating'     => ['required', 'integer', 'min:1', 'max:5'],
+            'title'      => ['required', 'string', 'max:255'],
+            'body'       => ['nullable', 'string'],
         ];
     }
 }

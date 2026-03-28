@@ -388,7 +388,7 @@ def _recover_partial_json_array(text: str) -> list:
     return objects
 
 
-def plan(description: str, max_tokens: int = 6000) -> list:
+def plan(description: str, max_tokens: int = 8000) -> list:
     """
     Convert a natural-language feature description to a list of BuildSpec dicts.
     Returns the parsed list or raises ValueError on parse failure.

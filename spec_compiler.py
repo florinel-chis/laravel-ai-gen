@@ -290,6 +290,7 @@ _CONTROLLER_DEFAULTS = {
 _FORM_REQUEST_DEFAULTS = {
     "rules": {},
     "conditional_rules": {},
+    "unique_ignore_route_param": None,
 }
 
 _DEFAULTS_BY_ARTIFACT = {
@@ -324,6 +325,31 @@ _REQUIRED_BY_ARTIFACT = {
     "seeder":       {"class"},
     "policy":       {"class"},
 }
+
+
+def _validate_unique_ignore(spec: dict) -> None:
+    """Validate unique_ignore_route_param consistency with rules."""
+    if spec.get("artifact") != "form_request":
+        return
+
+    route_param = spec.get("unique_ignore_route_param")
+    rules = spec.get("rules", {})
+
+    has_unique_rule = any(
+        any("unique:" in str(r) for r in rule_list)
+        for rule_list in rules.values()
+        if isinstance(rule_list, list)
+    )
+
+    if route_param and not has_unique_rule:
+        raise SpecCompileError(
+            f"unique_ignore_route_param is '{route_param}' but no rule contains 'unique:' — "
+            f"either add a unique rule or set unique_ignore_route_param to null"
+        )
+
+    if has_unique_rule and not route_param and route_param is not None:
+        # Only warn if the field is completely absent (not explicitly null)
+        pass  # We don't warn on explicit None — that's intentional for POST-only forms
 
 
 def _validate_required(spec: dict) -> None:
@@ -375,7 +401,10 @@ def compile_spec(spec: dict, migrations_dir: Optional[str] = None) -> dict:
     # 4. Conditional rule structure
     _validate_conditional_rules(spec)
 
-    # 5. Apply defaults
+    # 5. Validate unique_ignore_route_param
+    _validate_unique_ignore(spec)
+
+    # 6. Apply defaults
     spec = _apply_defaults(spec)
 
     # 6. Infer file_path if missing
@@ -395,9 +424,93 @@ def compile_spec(spec: dict, migrations_dir: Optional[str] = None) -> dict:
     return spec
 
 
-def compile_spec_list(specs: list, migrations_dir: Optional[str] = None) -> list:
-    """Compile a list of specs. Returns all compiled specs or raises on first error."""
-    return [compile_spec(s, migrations_dir) for s in specs]
+def compile_spec_list(specs: list, migrations_dir: Optional[str] = None, cross_validate: bool = False) -> list:
+    """Compile a list of specs. Optionally run cross-spec validation."""
+    compiled = [compile_spec(s, migrations_dir) for s in specs]
+    if cross_validate:
+        issues = cross_validate_specs(compiled)
+        if issues:
+            raise SpecCompileError(
+                "Cross-spec validation issues:\n" + "\n".join(f"  - {i}" for i in issues)
+            )
+    return compiled
+
+
+def cross_validate_specs(specs: list) -> list:
+    """
+    Validate consistency across a list of compiled specs.
+    Returns a list of warning strings (empty = all good).
+
+    Checks:
+    1. Migration columns vs model fillable
+    2. Controller model/form_request references exist
+    3. BelongsTo FK fields are in model fillable
+    """
+    issues = []
+
+    # Index specs by type and identifiers
+    migrations = {}  # table -> column names
+    models = {}      # class -> spec
+    controllers = {} # class -> spec
+    form_requests = {} # class -> spec
+
+    for s in specs:
+        artifact = s.get("artifact")
+        if artifact == "migration":
+            table = s.get("table", "")
+            cols = [c.get("name", "") for c in s.get("columns", [])]
+            migrations[table] = cols
+        elif artifact == "model":
+            models[s.get("class", "")] = s
+        elif artifact == "controller":
+            controllers[s.get("class", "")] = s
+        elif artifact == "form_request":
+            form_requests[s.get("class", "")] = s
+
+    # Check 1: Migration columns vs model fillable
+    for cls, model_spec in models.items():
+        table = model_spec.get("table", "")
+        fillable = model_spec.get("fillable", [])
+        if table in migrations:
+            migration_cols = migrations[table]
+            for field in fillable:
+                if field not in migration_cols and not field.endswith("_id"):
+                    # FK fields like author_id may come from foreignId() which is named differently
+                    close = [c for c in migration_cols if _edit_distance(field, c) <= 2 and c != field]
+                    if close:
+                        issues.append(
+                            f"Model {cls}: fillable '{field}' not in migration '{table}' columns. "
+                            f"Did you mean '{close[0]}'?"
+                        )
+                    elif migration_cols:
+                        issues.append(
+                            f"Model {cls}: fillable '{field}' not found in migration '{table}' columns "
+                            f"{migration_cols}"
+                        )
+
+    # Check 2: Controller references
+    for cls, ctrl_spec in controllers.items():
+        ref_model = ctrl_spec.get("model", "")
+        if ref_model and ref_model not in models:
+            issues.append(f"Controller {cls}: references model '{ref_model}' but no model spec found")
+
+        ref_fr = ctrl_spec.get("form_request", "")
+        if ref_fr and ref_fr not in form_requests:
+            issues.append(f"Controller {cls}: references form_request '{ref_fr}' but no form_request spec found")
+
+    # Check 3: BelongsTo FK in fillable
+    for cls, model_spec in models.items():
+        fillable = model_spec.get("fillable", [])
+        for rel in model_spec.get("relationships", []):
+            if rel.get("type") == "BelongsTo":
+                fk = rel.get("foreign_key", rel.get("model", "").lower() + "_id")
+                if fk not in fillable:
+                    issues.append(
+                        f"Model {cls}: BelongsTo relationship '{rel.get('method', '?')}' "
+                        f"expects FK '{fk}' in fillable but it's missing"
+                    )
+
+    return issues
 
 
 # ─── PHP expansion helpers (used by gen_spec_apps.py) ────────────────────────

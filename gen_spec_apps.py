@@ -39,8 +39,8 @@ Rules:
 - artifact=model: ALWAYS add `use Illuminate\\Database\\Eloquent\\Factories\\HasFactory;` and `use HasFactory;` when has_factory=true. ONLY add relationship methods listed in relationships[]. Import every relationship return type (BelongsTo, HasMany, BelongsToMany, etc.).
 - artifact=controller: ALWAYS import `use App\\Http\\Controllers\\Controller;` and `use Illuminate\\Http\\Request;`. destroy() returns response()->noContent(). store() returns response()->json($resource, 201).
 - artifact=resource: ALWAYS import `use Illuminate\\Http\\Resources\\Json\\JsonResource;`. Import every Resource class used in toArray().
-- artifact=form_request: rules() returns exact rules from spec. If conditional_rules present, expand each field using $this->isMethod('POST') ternary. authorize() returns true.
-- artifact=controller: If validation_mode=inline use $request->validate([...]) in store() and update(). If validation_mode=form_request import and use the FormRequest class."""
+- artifact=form_request: rules() returns exact rules from spec. If conditional_rules present, expand each field using $this->isMethod('POST') ternary or spread. For POST-only rules use spread: `...$this->isMethod('POST') ? ['rule'] : []`. authorize() returns true. When unique_ignore_route_param is set (non-null), replace any 'unique:table,col' string rule with Rule::unique('table', 'col')->ignore($this->route('param')). Import use Illuminate\\Validation\\Rule; at the top.
+- artifact=controller: If validation_mode=inline use $request->validate([...]) in store() and update(). If validation_mode=form_request import and use the FormRequest class. When the model has FK fields in fillable (e.g. author_id), ALWAYS include them in $request->validated() passed to Model::create(). NEVER exclude FK fields or set them separately after create()."""
 
 
 def gen(spec: dict, max_tokens: int = 1000) -> str:
@@ -75,7 +75,7 @@ def save(path: str, content: str):
 
 # ── APP 1: Subscriber API ─────────────────────────────────────────────────────
 print("\n=== App 1: Subscriber API ===")
-D1 = "/Users/fch/qwen/app1_subscriber_spec_v4_generated"
+D1 = "/Users/fch/qwen/app1_subscriber_spec_v5_generated"
 
 save(f"{D1}/database/migrations/2026_03_28_200001_create_subscribers_table.php", gen({
     "laravel_version": "13.x",
@@ -163,7 +163,7 @@ print(f"App 1 done → {D1}")
 
 # ── APP 2: Book Library ───────────────────────────────────────────────────────
 print("\n=== App 2: Book Library ===")
-D2 = "/Users/fch/qwen/app2_library_spec_v4_generated"
+D2 = "/Users/fch/qwen/app2_library_spec_v5_generated"
 
 save(f"{D2}/database/migrations/2026_03_28_300001_create_authors_table.php", gen({
     "laravel_version": "13.x",
@@ -189,7 +189,9 @@ save(f"{D2}/database/migrations/2026_03_28_300002_create_books_table.php", gen({
         {"name": "title", "type": "string"},
         {"name": "isbn", "type": "string", "unique": True, "length": 20},
         {"name": "description", "type": "text", "nullable": True},
-        {"name": "published_year", "type": "integer", "nullable": True}
+        {"name": "year", "type": "integer", "nullable": True},
+        {"name": "pages", "type": "integer", "nullable": True},
+        {"name": "status", "type": "string", "nullable": True}
     ],
     "timestamps": True,
     "soft_deletes": True
@@ -332,7 +334,7 @@ print(f"App 2 done → {D2}")
 
 # ── APP 3: Event Management ───────────────────────────────────────────────────
 print("\n=== App 3: Event Management ===")
-D3 = "/Users/fch/qwen/app3_events_spec_v4_generated"
+D3 = "/Users/fch/qwen/app3_events_spec_v5_generated"
 
 save(f"{D3}/database/migrations/2026_03_28_400001_create_venues_table.php", gen({
     "laravel_version": "13.x",
@@ -497,13 +499,21 @@ save(f"{D3}/app/Http/Requests/StoreEventRequest.php", gen({
     "rules": {
         "title": ["required", "string", "max:255"],
         "description": ["nullable", "string"],
-        "venue_id": ["required_on_post", "integer", "exists:venues,id"],
-        "event_date": ["required", "date", "after_now_on_post"],
+        "venue_id": [],
+        "event_date": ["required", "date"],
         "status": ["nullable", "string", "in:draft,published,cancelled"],
         "speaker_ids": ["nullable", "array"],
         "speaker_ids.*": ["integer", "exists:speakers,id"]
     },
-    "unique_ignore_route_param": None
+    "conditional_rules": {
+        "venue_id": {
+            "POST": ["required", "integer", "exists:venues,id"],
+            "PUT":  ["sometimes", "integer", "exists:venues,id"]
+        },
+        "event_date": {
+            "POST": ["after:now"]
+        }
+    }
 }))
 
 save(f"{D3}/app/Http/Controllers/Api/EventController.php", gen({

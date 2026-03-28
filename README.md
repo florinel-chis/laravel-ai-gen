@@ -162,6 +162,42 @@ Small models (3B-7B) can enter repetition loops on longer outputs (>300 tokens).
 10. Sprint 2: targeted precision fixes (3 bug patterns eliminated) — val loss 0.055, 5/5 × 11/11
 11. Sprint 3: API Resources + Form Request precision + Pest tests — val loss 0.032, 14/14 test assertions pass in real Laravel
 
+## BuildSpec Pipeline (New)
+
+A second, higher-precision pipeline using structured **BuildSpec JSON** instead of natural language.
+
+```bash
+# NL → specs → compile → generate PHP
+python3 pipeline_spec.py "Create a REST API for managing blog posts with tags"
+
+# Skip planner — use a spec file directly
+python3 pipeline_spec.py --spec specs.json --output ./generated
+
+# Plan only (inspect specs before generating)
+python3 pipeline_spec.py --plan-only "REST API for subscribers"
+```
+
+**Why spec-first?** Natural language gives the model room to hallucinate. BuildSpec removes that ambiguity:
+
+| Stage | Tool | What it does |
+|-------|------|-------------|
+| 1. Plan | `planner.py` | NL → BuildSpec JSON array (few-shot) |
+| 2. Compile | `spec_compiler.py` | Validates + normalizes each spec, catches errors before generation |
+| 3. Generate | `pipeline_spec.py` | Each spec → PHP file (adapters_spec_v4) |
+| 4. Check | `php -l` | Syntax-validates all written files |
+
+**LoRA adapter**: [fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA-Spec](https://huggingface.co/fchis/Laravel-13x-Qwen2.5-Coder-7B-Instruct-LoRA-Spec)
+**Training dataset**: [fchis/laravel-buildspec-training](https://huggingface.co/datasets/fchis/laravel-buildspec-training) (49 examples)
+
+### Ablation: Spec vs Prompt
+
+| Config | Pest tests | Manual fixes | Error type |
+|--------|-----------|-------------|------------|
+| Prompt (adapters_v9) | 52/58 | 5 | Semantic hallucinations |
+| BuildSpec (adapters_spec_v4) | 20/20 | 4 | Spec quality issues |
+
+Spec errors are compiler-catchable before generation. Prompt errors require runtime debugging.
+
 ## License
 
 Apache 2.0
